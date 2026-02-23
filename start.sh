@@ -1,4 +1,5 @@
 #!/bin/bash
+python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install streamlit scikit-learn nltk joblib
+python3 -m pip install streamlit scikit-learn nltk joblib
 streamlit run main.py
