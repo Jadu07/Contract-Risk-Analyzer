@@ -17,11 +17,24 @@ text = st.text_area("Contract Text", height=200, placeholder="Paste the contract
 
 if st.button("Analyze Risk"):
 
-    cleaned = clean_legal_text(text)
-    features = vectorizer.transform([cleaned])
-    prediction = model.predict(features)[0]
-
-    if prediction == 1:
-        st.error("Risky Contract")
+    if text.strip() == "":
+        st.warning("Please enter contract text.")
     else:
-        st.success("Low Risk Contract")
+        cleaned = clean_legal_text(text)
+        features = vectorizer.transform([cleaned])
+
+        # Prediction
+        prediction = model.predict(features)[0]
+
+        # Probability (Risk Score)
+        probabilities = model.predict_proba(features)
+        risk_score = (probabilities[0][1])*100   # assuming class 1 = risky
+
+        st.subheader("Analysis Result")
+
+        if prediction == 1:
+            st.error("Risky Contract")
+        else:
+            st.success("Low Risk Contract")
+
+        st.write(f"Risk Score: {risk_score:.2f} %")
