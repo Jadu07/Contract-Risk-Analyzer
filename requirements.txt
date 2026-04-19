@@ -1,4 +1,26 @@
+# ---- UI ---------------------------------------------------------------
+streamlit>=1.54.0
+
+# ---- Milestone 2: Agentic stack --------------------------------------
+google-genai>=0.8.0              # Gemini 2.5 Flash ingestion + segmentation (new unified SDK)
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-groq>=0.2.0            # Llama-3 via Groq (free tier)
+langchain-huggingface>=0.1.0     # Open-source MiniLM embeddings
+langchain-chroma>=0.1.4          # Local vector store
+langchain-text-splitters>=0.3.0
+langgraph>=0.2.0                 # Agentic workflow w/ explicit state
+chromadb>=0.5.0
+sentence-transformers>=3.0.0     # Required by HuggingFaceEmbeddings
+
+# ---- PDF export + source-PDF highlighting (extension) ----------------
+fpdf2>=2.7.9                     # Structured PDF risk report
+pymupdf>=1.24.0                  # Annotate the uploaded contract with highlights
+
+# ---- Config loading --------------------------------------------------
+python-dotenv>=1.0.0             # Read GEMINI_API_KEY / GROQ_API_KEY from .env
+
+# ---- Milestone 1 (legacy main.py still works) ------------------------
 joblib>=1.4.2
 nltk>=3.9.2
 scikit-learn>=1.8.0
-streamlit>=1.54.0

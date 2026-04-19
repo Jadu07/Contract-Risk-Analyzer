@@ -1,0 +1,11 @@
+[server]
+# Disable Streamlit's module-path walker. It introspects every loaded
+# module's __path__, which triggers transformers' lazy loader and
+# surfaces noisy ModuleNotFoundError traces for optional sub-modules
+# (torchvision, zoedepth, etc.) that we do not actually use.
+# Trade-off: no auto-reload on source edits — restart the server
+# manually during development.
+fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false
