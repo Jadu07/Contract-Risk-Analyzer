@@ -6,6 +6,7 @@ google-genai>=0.8.0              # Gemini 2.5 Flash ingestion + segmentation (ne
 langchain>=0.3.0
 langchain-core>=0.3.0
 langchain-groq>=0.2.0            # Llama-3 via Groq (free tier)
+langchain-openai>=1.1.14
 langchain-huggingface>=0.1.0     # Open-source MiniLM embeddings
 langchain-chroma>=0.1.4          # Local vector store
 langchain-text-splitters>=0.3.0

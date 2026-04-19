@@ -5,19 +5,19 @@ Wires the agent loop that drives end-to-end analysis:
 
     ┌──────────────┐     ┌───────────────┐
     │  retrieve    │ ──> │   analyze     │ ──┐
-    │  (RAG)       │     │   (Groq LLM)  │   │ loop while more clauses
+    │  (RAG)       │     │  (OpenAI LLM) │   │ loop while more clauses
     └──────────────┘     └───────────────┘ ──┘
               ^                │
               └── next clause ─┤    once all done
                                ▼
                         ┌──────────────┐
                         │  summarize   │ ──► END
-                        │  (Groq LLM)  │
+                        │  (OpenAI LLM)│
                         └──────────────┘
 
   * ``retrieve``  : pulls top-k legal guidelines for the current clause
                     from the Chroma retriever.
-  * ``analyze``   : asks Groq's Llama-3 to classify the clause into
+  * ``analyze``   : asks OpenAI's GPT to classify the clause into
                     ``Low | Medium | High`` risk and produce a
                     structured JSON analysis. Appends to the report.
   * ``summarize`` : final node — produces the executive-level contract
@@ -32,19 +32,17 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any, Dict, List, Optional, TypedDict
 
 from langchain_core.vectorstores import VectorStoreRetriever
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
 logger = logging.getLogger(__name__)
 
-# Llama 3.3 70B on Groq — strong reasoning, generous free tier, fast.
-GROQ_MODEL = "llama-3.3-70b-versatile"
+OPENAI_MODEL = "gpt-4o-mini"
 
-# The word "JSON" MUST appear in the prompt whenever we enable Groq's
+# The word "JSON" MUST appear in the prompt whenever we enable OpenAI's
 # JSON response_format, or the API will reject the request.
 ANALYZER_SYSTEM_PROMPT = """\
 You are a senior contracts lawyer reviewing ONE clause at a time. Be
@@ -139,14 +137,13 @@ class ContractState(TypedDict):
     contract_summary: Optional[Dict[str, Any]]
     errors: Optional[str]
 
-
 # --------------------------------------------------------------------------
 # Graph builder
 # --------------------------------------------------------------------------
 def build_agent(
     retriever: VectorStoreRetriever,
-    groq_api_key: str,
-    model_name: str = GROQ_MODEL,
+    openai_api_key: str,
+    model_name: str = OPENAI_MODEL,
 ):
     """Construct and compile the LangGraph workflow.
 
@@ -154,10 +151,10 @@ def build_agent(
     ----------
     retriever:
         A LangChain retriever (see retriever.build_retriever).
-    groq_api_key:
-        Free-tier Groq API key supplied by the user.
+    openai_api_key:
+        OpenAI API key supplied by the user/environment.
     model_name:
-        Groq-hosted model id. Defaults to Llama 3.3 70B.
+        OpenAI model id. Defaults to gpt-4o-mini.
 
     Returns
     -------
@@ -165,8 +162,8 @@ def build_agent(
     """
     # Temperature 0 for reproducible legal analysis. JSON mode ensures
     # the output is directly parseable.
-    llm = ChatGroq(
-        api_key=groq_api_key,
+    llm = ChatOpenAI(
+        api_key=openai_api_key,
         model=model_name,
         temperature=0.0,
         model_kwargs={"response_format": {"type": "json_object"}},
@@ -190,7 +187,7 @@ def build_agent(
 
     # ---- Node 2: analyze -------------------------------------------------
     def analyze_node(state: ContractState) -> Dict[str, Any]:
-        """Ask the Groq LLM to score + explain the current clause."""
+        """Ask the OpenAI LLM to score + explain the current clause."""
         idx = state["current_index"]
         clause = state["clauses"][idx]
         context = state.get("retrieved_context", "") or "No relevant guidelines found."
@@ -202,7 +199,7 @@ def build_agent(
             f"\"\"\"\n{context}\n\"\"\""
         )
 
-        analysis = _invoke_with_json_repair(
+        analysis = _invoke_with_json_retry(
             llm,
             system_prompt=ANALYZER_SYSTEM_PROMPT,
             user_msg=user_msg,
@@ -248,7 +245,7 @@ def build_agent(
             "Write the executive summary now.\n\n"
             f"{json.dumps(compact, ensure_ascii=False)}"
         )
-        summary = _invoke_with_json_repair(
+        summary = _invoke_with_json_retry(
             llm,
             system_prompt=SUMMARIZER_SYSTEM_PROMPT,
             user_msg=user_msg,
@@ -332,7 +329,7 @@ def run_agent(
 # --------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------
-def _invoke_with_json_repair(
+def _invoke_with_json_retry(
     llm,
     *,
     system_prompt: str,
@@ -340,14 +337,7 @@ def _invoke_with_json_repair(
     label: str,
     max_retries: int = 2,
 ) -> Optional[Dict[str, Any]]:
-    """Invoke the LLM and guarantee a dict, repairing Groq's common mistakes.
-
-    Groq's JSON mode (``response_format={"type": "json_object"}``) occasionally
-    rejects Llama-3's output with ``json_validate_failed`` when the model
-    forgets to quote a string value. The malformed payload is still returned
-    in the error body under ``failed_generation`` — we extract it, try to
-    repair it, and fall back to a stricter retry.
-    """
+    """Invoke the LLM and guarantee a dict. Retries on invalid JSON."""
     last_err: Optional[str] = None
     strictness_reminder = (
         "\n\nREMINDER: return ONE JSON object. Every string value MUST be "
@@ -365,25 +355,20 @@ def _invoke_with_json_repair(
                 ]
             ).content
             if isinstance(raw, str):
-                parsed = _parse_or_repair(raw)
+                parsed = _parse_json(raw)
                 if parsed is not None:
                     return parsed
             last_err = "empty or non-string LLM response"
         except Exception as exc:  # noqa: BLE001
             last_err = str(exc)
-            failed = _extract_failed_generation(exc)
-            if failed:
-                parsed = _parse_or_repair(failed)
-                if parsed is not None:
-                    logger.info("%s: recovered from json_validate_failed on attempt %d", label, attempt + 1)
-                    return parsed
+            
         logger.warning("%s: attempt %d failed (%s)", label, attempt + 1, last_err)
 
     return None
 
 
-def _parse_or_repair(raw: str) -> Optional[Dict[str, Any]]:
-    """Try strict json.loads, then a regex-based repair, then give up."""
+def _parse_json(raw: str) -> Optional[Dict[str, Any]]:
+    """Safely extract and parse JSON from the LLM response."""
     cleaned = raw.strip()
     # Strip ```json fences the model sometimes sneaks in despite JSON mode.
     if cleaned.startswith("```"):
@@ -395,96 +380,7 @@ def _parse_or_repair(raw: str) -> Optional[Dict[str, Any]]:
         obj = json.loads(cleaned)
         return obj if isinstance(obj, dict) else None
     except json.JSONDecodeError:
-        pass
-
-    repaired = _repair_unquoted_string_values(cleaned)
-    try:
-        obj = json.loads(repaired)
-        return obj if isinstance(obj, dict) else None
-    except json.JSONDecodeError:
         return None
-
-
-# Keys whose values should always be strings — Llama-3 on Groq drops the
-# outer quotes on these most often. We only repair at known keys to avoid
-# corrupting legitimately structured values (arrays, ints, nested objects).
-_STRING_VALUED_KEYS = (
-    "Risk_Level",
-    "Explanation",
-    "Mitigation",
-    "contract_overview",
-    "overall_risk_severity",
-    "risk_description",
-    "disclaimer",
-)
-
-_KV_RE = re.compile(
-    r'("(?:' + "|".join(_STRING_VALUED_KEYS) + r')"\s*:\s*)'
-    r'([^\n\r]+?)'
-    # Stop at: optional-comma + newline + next "key": | end-of-object.
-    r'(?=(?:\s*,)?\s*(?:\r?\n)+\s*"[A-Za-z_][A-Za-z0-9_]*"\s*:|\s*(?:\r?\n)*\s*\}\s*$)',
-    re.DOTALL,
-)
-
-# Inserts a missing comma when a closing quote is followed by whitespace
-# and another "key": — Groq sometimes drops the comma along with the
-# outer quotes.
-_MISSING_COMMA_RE = re.compile(r'(")(\s*(?:\r?\n)\s*)(")([A-Za-z_][A-Za-z0-9_]*"\s*:)')
-
-
-def _repair_unquoted_string_values(raw: str) -> str:
-    """Wrap unquoted string values in double quotes for known keys.
-
-    Converts:  "Explanation": The clause is risky,
-    Into:      "Explanation": "The clause is risky",
-
-    Values that are already valid JSON (quoted strings, arrays, numbers,
-    etc.) are left untouched — the callback inspects each captured value
-    and only rewrites it if `json.loads` rejects it as-is.
-    """
-    def repl(m: "re.Match[str]") -> str:
-        key_prefix, value = m.group(1), m.group(2)
-        stripped = value.strip().rstrip(",").strip()
-        if not stripped:
-            return m.group(0)
-        # If the captured value is already a valid JSON literal
-        # (quoted string, array, object, number, bool, null), keep it.
-        try:
-            json.loads(stripped)
-            return m.group(0)
-        except json.JSONDecodeError:
-            pass
-        # Otherwise wrap the raw text as a JSON string.
-        escaped = stripped.replace("\\", "\\\\").replace('"', '\\"')
-        return f'{key_prefix}"{escaped}"'
-
-    out = _KV_RE.sub(repl, raw)
-    # Second pass: insert commas missing between adjacent string-valued
-    # key/value pairs (e.g. '"..."\n    "NextKey": ...').
-    out = _MISSING_COMMA_RE.sub(r'\1,\2\3\4', out)
-    return out
-
-
-def _extract_failed_generation(exc: Exception) -> Optional[str]:
-    """Pull the ``failed_generation`` payload out of a Groq BadRequestError."""
-    body = getattr(exc, "body", None)
-    if isinstance(body, dict):
-        err = body.get("error") or {}
-        if isinstance(err, dict):
-            val = err.get("failed_generation")
-            if isinstance(val, str) and val.strip():
-                return val
-    # Fallback: scrape it from the stringified exception.
-    text = str(exc)
-    marker = "'failed_generation': '"
-    i = text.find(marker)
-    if i != -1:
-        j = text.find("'}", i + len(marker))
-        if j != -1:
-            # Decode the single-quoted python-repr payload back to a raw string.
-            snippet = text[i + len(marker):j].encode("utf-8").decode("unicode_escape", errors="replace")
-            return snippet
-    return None
 
 
 def _fallback_summary(

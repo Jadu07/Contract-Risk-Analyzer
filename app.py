@@ -6,7 +6,7 @@ Ties the back-end modules together into a public-facing UI:
     user PDF  ──►  ingestion.py (Gemini 2.5 Flash)
                         │
                         ▼
-                   list[Clause]  ──►  agent.py (Groq + Chroma RAG)
+                   list[Clause]  ──►  agent.py (OpenAI + Chroma RAG)
                                              │
                                              ▼
                                 {summary, per-clause report}
@@ -37,13 +37,13 @@ from pdf_export import build_pdf_report
 from pdf_highlighter import highlight_risky_clauses
 from retriever import build_retriever
 
-# Load GEMINI_API_KEY / GROQ_API_KEY from a local .env file, if present.
+# Load GEMINI_API_KEY / OPENAI_API_KEY from a local .env file, if present.
 # Real env vars always take precedence (so production hosting can inject
 # them without a .env file on disk).
 load_dotenv(override=False)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 
 # Risk levels we actually show in the UI and highlight in the PDF.
 # "Low" clauses are clean findings and "Unknown" clauses are analyzer
@@ -82,7 +82,7 @@ def _run_pipeline(pdf_bytes: bytes) -> Dict[str, Any]:
 
     Returns a dict with keys ``structured_report`` and ``contract_summary``.
     API keys are read from process env (see ``GEMINI_API_KEY`` /
-    ``GROQ_API_KEY`` at module load time) — never from the UI.
+    ``OPENAI_API_KEY`` at module load time) — never from the UI.
     """
     # Gemini's SDK expects a filesystem path, so we stage the upload.
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -99,7 +99,7 @@ def _run_pipeline(pdf_bytes: bytes) -> Dict[str, Any]:
             pass
 
     retriever = get_retriever()
-    compiled_graph = build_agent(retriever, GROQ_API_KEY)
+    compiled_graph = build_agent(retriever, OPENAI_API_KEY)
     return run_agent(compiled_graph, clauses)
 
 
@@ -224,7 +224,7 @@ def main() -> None:
     st.title("📄 Agentic Contract Risk Analyzer")
     st.caption(
         "Gemini 2.5 Flash segments the PDF · "
-        "Llama-3 (Groq) reasons about each clause · "
+        "GPT-4o-mini reasons about each clause · "
         "Chroma + MiniLM provides legal context"
     )
 
@@ -245,7 +245,7 @@ def main() -> None:
         name
         for name, value in (
             ("GEMINI_API_KEY", GEMINI_API_KEY),
-            ("GROQ_API_KEY", GROQ_API_KEY),
+            ("OPENAI_API_KEY", OPENAI_API_KEY),
         )
         if not value
     ]
@@ -273,7 +273,7 @@ def main() -> None:
         # Read once, cache bytes so the highlighter can reuse them later.
         pdf_bytes = pdf_file.read()
         try:
-            with st.spinner("🧠 Segmenting with Gemini → reasoning with Llama-3..."):
+            with st.spinner("🧠 Segmenting with Gemini → reasoning with OpenAI..."):
                 result = _run_pipeline(pdf_bytes)
             st.session_state["result"] = result
             st.session_state["original_pdf_bytes"] = pdf_bytes
