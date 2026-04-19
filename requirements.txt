@@ -1,6 +1,6 @@
 # ---- UI ---------------------------------------------------------------
 streamlit>=1.54.0
-
+protobuf<=3.20.3
 # ---- Milestone 2: Agentic stack --------------------------------------
 google-genai>=0.8.0              # Gemini 2.5 Flash ingestion + segmentation (new unified SDK)
 langchain>=0.3.0

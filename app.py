@@ -21,6 +21,9 @@ from __future__ import annotations
 import base64
 import json
 import os
+
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+
 import tempfile
 from typing import Any, Dict, List
 
